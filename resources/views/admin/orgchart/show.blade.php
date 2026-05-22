@@ -9,43 +9,56 @@
 
 @section('content')
 
-{{-- ── Toolbar ──────────────────────────────────────────── --}}
-<div class="oc-toolbar">
-    <div class="oc-toolbar-left">
-        <a href="{{ route('admin.orgchart.index', ['period_id' => $period->id]) }}" class="btn btn-secondary btn-sm">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
-            Kembali
-        </a>
-        <div class="oc-title">
-            <strong>{{ $title }}</strong>
-            <span class="badge badge-blue">{{ $period->label }}</span>
+{{-- ── Canvas & Toolbar Wrapper ────────────────────────────── --}}
+<div class="card" style="width: 100%; max-width: 100%; overflow: hidden; box-sizing: border-box;">
+    <div class="card-header" style="flex-wrap: wrap; gap: 15px; width: 100%; box-sizing: border-box;">
+        <div class="oc-toolbar-left" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <a href="{{ route('admin.orgchart.index', ['period_id' => $period->id]) }}" class="btn btn-secondary btn-sm">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                Kembali
+            </a>
+            <div class="oc-title" style="font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px;">
+                <strong>{{ $title }}</strong>
+                <span class="badge badge-blue">{{ $period->label }}</span>
+            </div>
         </div>
-    </div>
-    <div class="oc-toolbar-right">
-        <div class="oc-search-wrap">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-            <input type="text" id="oc-search" placeholder="Cari nama / NIK / jabatan..." autocomplete="off">
-        </div>
-        <button class="btn btn-secondary btn-sm" id="btn-zoom-in"  title="Zoom In">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-        </button>
-        <button class="btn btn-secondary btn-sm" id="btn-zoom-out" title="Zoom Out">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
-        </button>
-        <button class="btn btn-secondary btn-sm" id="btn-fit"      title="Fit">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
-        </button>
-        <button class="btn btn-success  btn-sm" id="btn-png">PNG</button>
-        <button class="btn btn-primary  btn-sm" id="btn-pdf">PDF</button>
-        <button class="btn btn-secondary btn-sm" id="btn-print">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
-            Print
-        </button>
-    </div>
-</div>
+        
+        <div class="oc-toolbar-right" style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <div class="oc-search-wrap" style="display:flex; align-items:center; gap:6px; border:1.5px solid #e2e8f0; border-radius:8px; padding:5px 10px; background:white;">
+                <svg style="width:16px;height:16px;color:#94a3b8;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="text" id="oc-search" placeholder="Cari nama / NIK..." autocomplete="off" style="border:none; outline:none; font-size:12.5px; width:150px; font-family:inherit; color:#1e293b;">
+            </div>
+            
+            <button class="btn btn-secondary btn-sm" id="btn-zoom-in" style="display:inline-flex; align-items:center; gap:6px;">
+                <svg style="width:16px;height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"/></svg>
+                Zoom In
+            </button>
+            <button class="btn btn-secondary btn-sm" id="btn-zoom-out" style="display:inline-flex; align-items:center; gap:6px;">
+                <svg style="width:16px;height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM7 10h6"/></svg>
+                Zoom Out
+            </button>
+            <button class="btn btn-secondary btn-sm" id="btn-fit" style="display:inline-flex; align-items:center; gap:6px;">
+                <svg style="width:16px;height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                Sesuaikan
+            </button>
 
-{{-- ── Canvas ────────────────────────────────────────────── --}}
-<div class="oc-canvas-wrap" id="oc-canvas-wrap">
+            <button class="btn btn-success btn-sm" id="btn-png" style="display:inline-flex; align-items:center; gap:6px;">
+                <svg style="width:16px;height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                <span>Download PNG</span>
+            </button>
+            <button class="btn btn-danger btn-sm" id="btn-pdf" style="display:inline-flex; align-items:center; gap:6px;">
+                <svg style="width:16px;height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                <span>Download PDF</span>
+            </button>
+            <button class="btn btn-info btn-sm text-white" id="btn-print" style="display:inline-flex; align-items:center; gap:6px; color:white;">
+                <svg style="width:16px;height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+                <span>Print</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="card-body" style="padding: 0;">
+        <div class="oc-canvas-wrap" id="oc-canvas-wrap" style="border:none; border-radius:0; min-height:600px; overflow:hidden;">
     <div class="oc-print-header" id="oc-print-header">
         <div>
             <div style="font-size:10px;color:#999;font-weight:600;letter-spacing:.08em;">PROYEK SOTK ONLINE</div>
@@ -81,6 +94,8 @@
                 <button onclick="closeEmpModal()" class="emp-modal-close">&times;</button>
             </div>
             <div class="emp-modal-body" id="emp-modal-body"></div>
+        </div>
+    </div>
         </div>
     </div>
 </div>
@@ -329,7 +344,7 @@ function renderCard(svg, node, pos, highlighted) {
     svg.appendChild(fo);
 
     // Click handler
-    if (!isVacant && !isOval) {
+    if (!isVacant) {
         fo.style.cursor = 'pointer';
         fo.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -839,21 +854,41 @@ async function exportSvgToPng(scale) {
     const w   = parseFloat(svg.getAttribute('width'));
     const h   = parseFloat(svg.getAttribute('height'));
 
-    // Serialisasi SVG → data URL
-    const serializer = new XMLSerializer();
-    const svgClone   = svg.cloneNode(true);
-    // Reset transform di clone agar full chart tampil
+    const svgClone = svg.cloneNode(true);
     svgClone.style.transform      = 'none';
     svgClone.style.transformOrigin = '0 0';
     svgClone.setAttribute('width',  w);
     svgClone.setAttribute('height', h);
 
-    // Buat canvas manual via foreignObject pada blob URL
-    return new Promise((resolve) => {
-        const svgStr  = serializer.serializeToString(svgClone);
-        const blob    = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-        const url     = URL.createObjectURL(blob);
-        const img     = new Image();
+    // Inline semua image menjadi base64 agar canvas tidak berstatus "tainted" (SecurityError)
+    const images = svgClone.querySelectorAll('image');
+    for (let img of images) {
+        const href = img.getAttribute('href');
+        if (href && !href.startsWith('data:')) {
+            try {
+                const resp = await fetch(href);
+                const blob = await resp.blob();
+                const base64 = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.readAsDataURL(blob);
+                });
+                img.setAttribute('href', base64);
+            } catch (e) {
+                console.warn('Gagal inline gambar:', href);
+            }
+        }
+    }
+
+    // Serialisasi SVG → data URL
+    const serializer = new XMLSerializer();
+    const svgStr  = serializer.serializeToString(svgClone);
+    const svgBase64 = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgStr)));
+
+    // Buat canvas manual via image source data URI
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "Anonymous";
         img.onload = () => {
             const cvs = document.createElement('canvas');
             cvs.width  = w * scale;
@@ -863,41 +898,37 @@ async function exportSvgToPng(scale) {
             ctx.fillRect(0, 0, cvs.width, cvs.height);
             ctx.scale(scale, scale);
             ctx.drawImage(img, 0, 0);
-            URL.revokeObjectURL(url);
             resolve(cvs);
         };
         img.onerror = () => {
-            // Fallback: html2canvas jika SVG blob gagal (browser tertentu)
-            URL.revokeObjectURL(url);
-            const container = document.getElementById('oc-chart-container');
-            const origT = svg.style.transform;
-            svg.style.transform = 'none';
-            html2canvas(container, { backgroundColor: '#f0f4fb', scale: 2, useCORS: true }).then(c => {
-                svg.style.transform = origT;
-                resolve(c);
-            });
+            reject(new Error("Gagal memproses gambar dari SVG."));
         };
-        img.src = url;
+        img.src = svgBase64;
     });
 }
 
 document.getElementById('btn-png').addEventListener('click', async () => {
     const btn = document.getElementById('btn-png');
-    btn.disabled = true; btn.textContent = '...';
+    const span = btn.querySelector('span');
+    btn.disabled = true; span.textContent = 'Memproses...';
     try {
         const cvs = await exportSvgToPng(2);
         const a   = document.createElement('a');
         a.download = 'Struktur_' + CHART_PERIOD.replace(/ /g, '_') + '.png';
         a.href = cvs.toDataURL('image/png');
         a.click();
+    } catch (e) {
+        alert("Gagal mengunduh PNG: " + e.message);
+        console.error(e);
     } finally {
-        btn.disabled = false; btn.textContent = 'PNG';
+        btn.disabled = false; span.textContent = 'Download PNG';
     }
 });
 
 document.getElementById('btn-pdf').addEventListener('click', async () => {
     const btn = document.getElementById('btn-pdf');
-    btn.disabled = true; btn.textContent = '...';
+    const span = btn.querySelector('span');
+    btn.disabled = true; span.textContent = 'Memproses...';
     try {
         const cvs = await exportSvgToPng(2);
         const { jsPDF } = window.jspdf;
@@ -915,8 +946,11 @@ document.getElementById('btn-pdf').addEventListener('click', async () => {
         pdf.setFontSize(7); pdf.setTextColor(130);
         pdf.text('PT Bank Riau Kepri Syariah | Periode: ' + CHART_PERIOD, pw / 2, ph - 5, { align: 'center' });
         pdf.save('Struktur_' + CHART_PERIOD.replace(/ /g, '_') + '.pdf');
+    } catch (e) {
+        alert("Gagal mengunduh PDF: " + e.message);
+        console.error(e);
     } finally {
-        btn.disabled = false; btn.textContent = 'PDF';
+        btn.disabled = false; span.textContent = 'Download PDF';
     }
 });
 
