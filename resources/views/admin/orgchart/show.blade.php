@@ -199,9 +199,10 @@ const roots = CHART_NODES.filter(n => !n.parentId || n.parentId === '');
 // ════════════════════════════════════════════════════════════
 function classifyChildren(parentNode) {
     const ch = children[parentNode.id] || [];
-    const structural = [];  // rank 3,4,5,6 normal
+    const structural = [];  // rank 3,4,5 normal
     const sidePanel  = [];  // rank 5 yg tidak punya "jalur bagian" → tampil di kanan
     const ovals      = [];  // pegawai divisi & fungsional
+    const vertical   = [];  // rank 6 (pelaksana) → tampil bersusun vertikal di bawah
 
     ch.forEach(c => {
         if (c.node_shape === 'oval' || c.is_pegawai_divisi || c.is_fungsional) {
@@ -209,12 +210,14 @@ function classifyChildren(parentNode) {
         } else if (parentNode.rank <= 3 && c.rank === 5) {
             // Node rank-5 yang parentnya divisi (bukan bagian) → side panel
             sidePanel.push(c);
+        } else if (c.rank >= 6) {
+            vertical.push(c);
         } else {
             structural.push(c);
         }
     });
 
-    return { structural, sidePanel, ovals };
+    return { structural, sidePanel, ovals, vertical };
 }
 
 // ════════════════════════════════════════════════════════════
@@ -222,40 +225,70 @@ function classifyChildren(parentNode) {
 //  Pendekatan: bottom-up width calculation, top-down placement
 // ════════════════════════════════════════════════════════════
 
-// Hitung subtree width (lebar total yang dibutuhkan node beserta seluruh descendant-nya)
-// Hanya untuk node "structural" (bukan sidePanel)
+// Hitung subtree width — hanya structural children dan vertical
 function subtreeWidth(n) {
-    const { structural } = classifyChildren(n);
+    const { structural, vertical } = classifyChildren(n);
     const nw = nodeWidth(n);
-    if (!structural.length) return nw;
-    const childTotal = structural.reduce((s, c) => s + subtreeWidth(c), 0)
-                     + CFG.hGap * (structural.length - 1);
-    return Math.max(nw, childTotal);
+    
+    let structW = 0;
+    if (structural.length) {
+        structW = structural.reduce((s, c) => s + subtreeWidth(c), 0)
+                + CFG.hGap * (structural.length - 1);
+    }
+    
+    let vertW = 0;
+    if (vertical.length) {
+        // Vertical node diletakkan di sebelah kanan garis tengah (cx).
+        // Lebar ke kanan adalah CFG.hGap + maxNodeW.
+        // Agar cx tetap di tengah saat dirender, kita kalikan 2.
+        const maxVW = Math.max(...vertical.map(c => nodeWidth(c)));
+        vertW = (CFG.hGap + maxVW) * 2;
+    }
+    
+    return Math.max(nw, structW, vertW);
 }
 
 // Assign posisi (cx = center-x, cy = center-y) ke setiap node
-// returns { maxY }
+// returns maxY (batas bawah seluruh sub-tree)
 function assignPositions(node, cx, cy, positions) {
     const nw = nodeWidth(node);
     const nh = nodeHeight(node);
     positions[node.id] = { cx, cy, w: nw, h: nh };
 
-    const { structural } = classifyChildren(node);
-    if (!structural.length) return cy + nh;
+    const { structural, vertical } = classifyChildren(node);
+    if (!structural.length && !vertical.length) return cy + nh;
 
-    const nextY  = cy + nh + CFG.vGap;
-    const totalW = structural.reduce((s, c) => s + subtreeWidth(c), 0)
-                 + CFG.hGap * (structural.length - 1);
+    let maxY = cy + nh;
 
-    let childX = cx - totalW / 2;
-    let maxY = nextY;
-    structural.forEach(c => {
-        const sw  = subtreeWidth(c);
-        const ccx = childX + sw / 2;
-        const my  = assignPositions(c, ccx, nextY, positions);
-        if (my > maxY) maxY = my;
-        childX += sw + CFG.hGap;
-    });
+    if (structural.length) {
+        const nextY  = cy + nh + CFG.vGap;
+        const totalW = structural.reduce((s, c) => s + subtreeWidth(c), 0)
+                     + CFG.hGap * (structural.length - 1);
+
+        let childX = cx - totalW / 2;
+        maxY = nextY;
+        structural.forEach(c => {
+            const sw  = subtreeWidth(c);
+            const ccx = childX + sw / 2;
+            const my  = assignPositions(c, ccx, nextY, positions);
+            if (my > maxY) maxY = my;
+            childX += sw + CFG.hGap;
+        });
+    }
+
+    if (vertical.length) {
+        let vy = maxY + CFG.vGap;
+        vertical.forEach(c => {
+            const vw = nodeWidth(c);
+            const vh = nodeHeight(c);
+            // cx untuk node vertical: geser ke kanan dari garis tengah
+            const vcx = cx + CFG.hGap + vw / 2;
+            const my  = assignPositions(c, vcx, vy, positions);
+            if (my > maxY) maxY = my;
+            vy = my + 15; // gap antar stack pelaksana
+        });
+    }
+
     return maxY;
 }
 
@@ -440,19 +473,28 @@ function renderChart(highlightIds) {
     const svg = document.getElementById('oc-svg');
     while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-    // ── 1. Pisahkan side-panel nodes dari root ─────────────────────────────
-    // Side-panel = node rank-5 yang parentnya adalah root (rank 3)
-    //   → tampil di kolom kanan
-    const mainRoots   = [];
-    const sidePanelNodes = []; // { node, parentNode }
+    // ── 1. Pisahkan sidePanel (kanan) & oval/leftPanel (kiri) dari structural ──
+    // sidePanel  = rank-5 yang parentnya rank-3 → kolom KANAN (seperti Arsiptaris/Teller)
+    // leftPanel  = oval nodes (Pegawai Divisi & Fungsional) → kolom KIRI
+    const mainRoots      = [];
+    const sidePanelNodes = []; // { node, parentNode }  → KANAN
+    const leftPanelNodes = []; // { node, parentNode }  → KIRI
+
+    // Kumpulkan oval dari seluruh pohon secara rekursif
+    function collectLeftPanel(node) {
+        const { structural, ovals } = classifyChildren(node);
+        ovals.forEach(ov => leftPanelNodes.push({ node: ov, parentNode: node }));
+        structural.forEach(c => collectLeftPanel(c));
+    }
 
     roots.forEach(root => {
         const { structural, sidePanel } = classifyChildren(root);
         mainRoots.push({ root, structural, sidePanel });
         sidePanel.forEach(sp => sidePanelNodes.push({ node: sp, parentNode: root }));
+        collectLeftPanel(root);
     });
 
-    // ── 2. Hitung posisi struktur utama ───────────────────────────────────
+    // ── 2. Hitung posisi struktur utama (structural only) ─────────────────
     const positions = {};
     let curX = CFG.padX;
 
@@ -464,29 +506,68 @@ function renderChart(highlightIds) {
         curX += sw + CFG.hGap * 3;
     });
 
-    // ── 3. Temukan batas kanan & bawah struktur utama ─────────────────────
-    let mainMaxX = 0, mainMaxY = 0;
+    // ── 3. Batas kanan, kiri & bawah struktur utama ───────────────────────
+    let mainMinX = Infinity, mainMaxX = 0, mainMaxY = 0;
     Object.values(positions).forEach(p => {
+        const left   = p.cx - p.w / 2;
         const right  = p.cx + p.w / 2;
         const bottom = p.cy + p.h;
+        if (left   < mainMinX) mainMinX = left;
         if (right  > mainMaxX) mainMaxX = right;
         if (bottom > mainMaxY) mainMaxY = bottom;
     });
+    if (!isFinite(mainMinX)) mainMinX = CFG.padX;
 
-    // ── 4. Hitung posisi side-panel di kolom kanan ────────────────────────
-    // Side panel mulai di x = mainMaxX + orphanGapX
-    // y = sejajar baris paling bawah (rank 6 atau rank 5 jika tidak ada rank 6)
-    let spX = mainMaxX + CFG.orphanGapX;
+    // ── 4. Posisikan LEFT PANEL (oval) di kolom KIRI ──────────────────────
+    // Dibagi menjadi 2 kolom agar rapi:
+    // Kolom 1 (Inner Left, dekat struktur utama) : Pegawai Divisi / MPP
+    // Kolom 2 (Outer Left, lebih kiri lagi)      : Fungsional / Staf Ahli
 
-    // Cari Y paling bawah dari rank terbawah di struktur utama
-    let deepestY = CFG.padY;
-    CHART_NODES.forEach(n => {
-        const pos = positions[n.id];
-        if (!pos) return;
-        if (pos.cy > deepestY) deepestY = pos.cy;
+    const pegawaiDivisiNodes = leftPanelNodes.filter(lp => lp.node.is_pegawai_divisi);
+    const fungsionalNodes    = leftPanelNodes.filter(lp => lp.node.is_fungsional);
+
+    const pdMaxW = pegawaiDivisiNodes.length ? Math.max(...pegawaiDivisiNodes.map(lp => nodeWidth(lp.node))) : 0;
+    const fnMaxW = fungsionalNodes.length    ? Math.max(...fungsionalNodes.map(lp => nodeWidth(lp.node))) : 0;
+
+    // -- Hitung X untuk Kolom 1 (Pegawai Divisi) --
+    const pdCX = pdMaxW > 0 ? (mainMinX - CFG.orphanGapX - pdMaxW / 2) : 0;
+    let pdY = CFG.padY;
+    pegawaiDivisiNodes.forEach(({ node }) => {
+        const ow = nodeWidth(node);
+        const oh = nodeHeight(node);
+        positions[node.id] = { cx: pdCX, cy: pdY, w: ow, h: oh };
+        pdY += oh + CFG.hGap;
     });
 
-    // Posisi side panel: cy = deepestY (sejajar rank terbawah)
+    // -- Hitung X untuk Kolom 2 (Fungsional) --
+    // Berada di sebelah kiri Kolom 1 (jika ada), atau di sebelah kiri struktur utama (jika Kolom 1 kosong)
+    const fnCX = fnMaxW > 0 
+        ? (pdMaxW > 0 ? (pdCX - pdMaxW / 2 - CFG.orphanGapX - fnMaxW / 2) : (mainMinX - CFG.orphanGapX - fnMaxW / 2))
+        : 0;
+    let fnY = CFG.padY;
+    fungsionalNodes.forEach(({ node }) => {
+        const ow = nodeWidth(node);
+        const oh = nodeHeight(node);
+        positions[node.id] = { cx: fnCX, cy: fnY, w: ow, h: oh };
+        fnY += oh + CFG.hGap;
+    });
+
+    // ── 5. Posisikan SIDE PANEL (kanan) ──────────────────────────────────
+    // deepestY hanya dari node structural (bukan dari left panel / oval)
+    // sehingga panjang garis kanan TIDAK terpengaruh banyaknya data kiri
+    let spX = mainMaxX + CFG.orphanGapX;
+    let deepestY = CFG.padY;
+    // Hanya iterasi positions yang sudah ada SEBELUM left panel ditambahkan
+    // (left panel belum masuk positions di sini karena baru ditambah di atas)
+    // → pakai mainMaxY dari struktur utama sebagai batas bawah
+    CHART_NODES.forEach(n => {
+        const pos = positions[n.id];
+        // Skip jika belum terdaftar atau jika ini oval node
+        if (!pos) return;
+        const nd = nodeMap[n.id];
+        if (nd && (nd.is_pegawai_divisi || nd.is_fungsional || nd.node_shape === 'oval')) return;
+        if (pos.cy > deepestY) deepestY = pos.cy;
+    });
     sidePanelNodes.forEach(({ node }) => {
         const w = nodeWidth(node);
         const h = nodeHeight(node);
@@ -494,58 +575,150 @@ function renderChart(highlightIds) {
         spX += w + CFG.hGap;
     });
 
-    // ── 5. Hitung total canvas size ────────────────────────────────────────
-    let canvasW = spX + CFG.padX;
-    let canvasH = mainMaxY + CFG.padYBottom;
-    sidePanelNodes.forEach(({ node }) => {
-        const pos = positions[node.id];
-        if (pos && pos.cy + pos.h + CFG.padYBottom > canvasH)
-            canvasH = pos.cy + pos.h + CFG.padYBottom;
+    // ── 6. Hitung canvas size (memperhitungkan left panel) ────────────────
+    // Left panel bisa membuat canvas lebih lebar ke kiri → shift semua posisi
+    // agar tidak ada node yang cx - w/2 < 0
+    let globalMinX = Infinity;
+    Object.values(positions).forEach(p => {
+        const left = p.cx - p.w / 2;
+        if (left < globalMinX) globalMinX = left;
     });
+    const shiftX = globalMinX < CFG.padX ? (CFG.padX - globalMinX) : 0;
+    if (shiftX > 0) {
+        Object.keys(positions).forEach(id => { positions[id].cx += shiftX; });
+    }
+
+    let canvasW = 0, canvasH = 0;
+    Object.values(positions).forEach(p => {
+        const right  = p.cx + p.w / 2;
+        const bottom = p.cy + p.h;
+        if (right  > canvasW) canvasW = right;
+        if (bottom > canvasH) canvasH = bottom;
+    });
+    canvasW += CFG.padX;
+    canvasH += CFG.padYBottom;
 
     svg.setAttribute('width',  canvasW);
     svg.setAttribute('height', canvasH);
     svg.setAttribute('viewBox', `0 0 ${canvasW} ${canvasH}`);
 
-    // ── 6. Gambar semua garis (SEBELUM node agar tertimpa) ────────────────
-    // Rekursif untuk struktur utama
+    // ── 7. Gambar garis ───────────────────────────────────────────────────
+
+    // Garis struktural dan vertical
     function drawLines(node) {
         const pos = positions[node.id];
         if (!pos) return;
-        const { structural, ovals } = classifyChildren(node);
+        const { structural, vertical } = classifyChildren(node);
+        
+        if (structural.length) {
+            const structChildPositions = structural.map(c => positions[c.id]).filter(Boolean);
+            drawBusLines(svg, pos, structChildPositions.map(p => ({ cx: p.cx, cy: p.cy })), false, CFG.lineColor);
+            structural.forEach(c => drawLines(c));
+        }
 
-        // Garis ke structural children
-        const structChildPositions = structural.map(c => positions[c.id]).filter(Boolean);
-        drawBusLines(svg, pos, structChildPositions.map((p, i) => ({cx: p.cx, cy: p.cy})), false, CFG.lineColor);
-
-        // Garis dashed ke oval children
-        ovals.forEach(oc => {
-            const op = positions[oc.id];
-            if (op) drawOrthLine(svg, pos.cx, pos.cy + pos.h, op.cx, op.cy, true, CFG.lineDash);
-        });
-
-        structural.forEach(c => drawLines(c));
+        if (vertical.length) {
+            const vertPositions = vertical.map(c => positions[c.id]).filter(Boolean);
+            if (vertPositions.length) {
+                let startX = pos.cx;
+                let startY = pos.cy + pos.h;
+                
+                if (structural.length) {
+                    // Gabungkan garis bawah staf ke satu titik temu untuk pelaksana
+                    const structPositions = structural.map(c => positions[c.id]).filter(Boolean);
+                    if (structPositions.length) {
+                        const structBottomY = Math.max(...structPositions.map(p => p.cy + p.h));
+                        const mergeY = structBottomY + 15;
+                        
+                        structPositions.forEach(p => {
+                            // Garis turun dari tiap staf ke mergeY
+                            const path = el('path', {
+                                d: `M ${p.cx} ${p.cy + p.h} L ${p.cx} ${mergeY}`,
+                                fill: 'none', stroke: CFG.lineColor, 'stroke-width': CFG.lineW
+                            });
+                            svg.insertBefore(path, svg.firstChild);
+                        });
+                        
+                        const minCX = Math.min(...structPositions.map(p => p.cx));
+                        const maxCX = Math.max(...structPositions.map(p => p.cx));
+                        if (minCX < maxCX) {
+                            const path = el('path', {
+                                d: `M ${minCX} ${mergeY} L ${maxCX} ${mergeY}`,
+                                fill: 'none', stroke: CFG.lineColor, 'stroke-width': CFG.lineW
+                            });
+                            svg.insertBefore(path, svg.firstChild);
+                        }
+                        
+                        startX = pos.cx;
+                        startY = mergeY;
+                    }
+                }
+                
+                // Garis turun ke daftar pelaksana
+                const lastVert = vertPositions[vertPositions.length - 1];
+                const endY = lastVert.cy + lastVert.h / 2;
+                const vPath = el('path', {
+                    d: `M ${startX} ${startY} L ${startX} ${endY}`,
+                    fill: 'none', stroke: CFG.lineColor, 'stroke-width': CFG.lineW
+                });
+                svg.insertBefore(vPath, svg.firstChild);
+                
+                // Garis horizontal ke tiap pelaksana
+                vertPositions.forEach(vp => {
+                    const py = vp.cy + vp.h / 2;
+                    const hPath = el('path', {
+                        d: `M ${startX} ${py} L ${vp.cx - vp.w / 2} ${py}`,
+                        fill: 'none', stroke: CFG.lineColor, 'stroke-width': CFG.lineW
+                    });
+                    svg.insertBefore(hPath, svg.firstChild);
+                });
+            }
+            vertical.forEach(c => drawLines(c));
+        }
     }
-
     roots.forEach(root => drawLines(root));
 
-    // Garis side-panel: dari parentNode → kanan (elbow line)
-    // Garis keluar dari sisi kanan parent (bukan bawah), lalu ke bawah ke sisi kiri node
-    sidePanelNodes.forEach(({ node, parentNode }) => {
-        const pp  = positions[parentNode.id];
-        const cp  = positions[node.id];
+    // Garis LEFT PANEL (oval): elbow dari sisi KIRI parent → kiri → bawah → kanan ke oval
+    leftPanelNodes.forEach(({ node, parentNode }) => {
+        const pp = positions[parentNode.id];
+        const cp = positions[node.id];
         if (!pp || !cp) return;
 
-        // Titik awal: kanan tengah parent node
-        const x1 = pp.cx + pp.w / 2;
+        // Titik awal: tengah-kiri parent
+        const x1 = pp.cx - pp.w / 2;
         const y1 = pp.cy + pp.h / 2;
 
-        // Titik akhir: atas tengah node side-panel
+        // Titik akhir: tengah-kanan oval (sisi yang menghadap ke parent)
+        const x2 = cp.cx + cp.w / 2;
+        const y2 = cp.cy + cp.h / 2;
+
+        // Elbow: kiri parent → leftEdge → turun ke Y oval → kanan ke oval
+        // leftEdge disesuaikan dengan posisi x2 oval target (ditambah sedikit margin)
+        // Sehingga garis untuk 2 kolom berbeda tidak akan overlap
+        let leftEdge = x2 + CFG.orphanGapX / 3;
+        if (leftEdge > x1 - 10) leftEdge = x1 - 10; // pastikan tidak masuk ke dalam parent node
+
+        const d = `M ${x1} ${y1} L ${leftEdge} ${y1} L ${leftEdge} ${y2} L ${x2} ${y2}`;
+        const path = el('path', {
+            d,
+            fill: 'none',
+            stroke: CFG.lineDash,
+            'stroke-width': CFG.lineW,
+            'stroke-dasharray': '7,5',
+        });
+        svg.insertBefore(path, svg.firstChild);
+    });
+
+    // Garis SIDE PANEL (kanan): elbow dari sisi KANAN parent → kanan → bawah ke node
+    sidePanelNodes.forEach(({ node, parentNode }) => {
+        const pp = positions[parentNode.id];
+        const cp = positions[node.id];
+        if (!pp || !cp) return;
+
+        const x1 = pp.cx + pp.w / 2;
+        const y1 = pp.cy + pp.h / 2;
         const x2 = cp.cx;
         const y2 = cp.cy;
 
-        // Elbow: kanan dari parent → turun ke Y side-panel → kiri ke node
-        // x1 → rightEdge → rightEdge,y2 → x2,y2
         const rightEdge = Math.max(x1, x2 - CFG.orphanGapX / 2);
         const d = `M ${x1} ${y1} L ${rightEdge} ${y1} L ${rightEdge} ${y2} L ${x2} ${y2}`;
         const path = el('path', {
@@ -557,7 +730,7 @@ function renderChart(highlightIds) {
         svg.insertBefore(path, svg.firstChild);
     });
 
-    // ── 7. Render semua node ──────────────────────────────────────────────
+    // ── 8. Render semua node ──────────────────────────────────────────────
     const allRendered = new Set();
 
     function renderNodeTree(node) {
@@ -565,20 +738,22 @@ function renderChart(highlightIds) {
         if (!pos || allRendered.has(node.id)) return;
         allRendered.add(node.id);
         renderCard(svg, node, pos, highlightIds.has(node.id));
-
-        const { structural, ovals } = classifyChildren(node);
+        const { structural, vertical } = classifyChildren(node);
         structural.forEach(c => renderNodeTree(c));
-        ovals.forEach(c => {
-            const op = positions[c.id];
-            if (op && !allRendered.has(c.id)) {
-                allRendered.add(c.id);
-                renderCard(svg, c, op, highlightIds.has(c.id));
-            }
-        });
+        vertical.forEach(c => renderNodeTree(c));
     }
-
     roots.forEach(root => renderNodeTree(root));
 
+    // Render left panel (oval)
+    leftPanelNodes.forEach(({ node }) => {
+        const pos = positions[node.id];
+        if (pos && !allRendered.has(node.id)) {
+            allRendered.add(node.id);
+            renderCard(svg, node, pos, highlightIds.has(node.id));
+        }
+    });
+
+    // Render side panel (kanan)
     sidePanelNodes.forEach(({ node }) => {
         const pos = positions[node.id];
         if (pos && !allRendered.has(node.id)) {
@@ -606,11 +781,12 @@ document.getElementById('btn-fit')     .addEventListener('click', () => {
     const svg  = document.getElementById('oc-svg');
     const sw   = parseFloat(svg.getAttribute('width'))  || 1;
     const sh   = parseFloat(svg.getAttribute('height')) || 1;
-    const ww   = wrap.clientWidth;
+    const ww   = wrap.clientWidth  || 900;
     const wh   = wrap.clientHeight || 600;
-    currentScale = Math.min(ww / sw, wh / sh, 1) * 0.95;
+    currentScale = Math.min(ww / sw, wh / sh, 1) * 0.92;
+    // Center horizontally, small top padding
     panX = (ww - sw * currentScale) / 2;
-    panY = CFG.padY;
+    panY = 20;
     applyTransform();
 });
 
@@ -655,51 +831,109 @@ document.getElementById('oc-search').addEventListener('input', function() {
 });
 
 // ════════════════════════════════════════════════════════════
-//  EXPORT
+//  EXPORT — render full SVG ke PNG / PDF (independen dari scroll/zoom)
 // ════════════════════════════════════════════════════════════
-document.getElementById('btn-png').addEventListener('click', async () => {
-    const container = document.getElementById('oc-chart-container');
+async function exportSvgToPng(scale) {
+    scale = scale || 2;
     const svg = document.getElementById('oc-svg');
-    const origTransform = svg.style.transform;
-    const origOrigin    = svg.style.transformOrigin;
-    svg.style.transform = 'none';
-    svg.style.transformOrigin = '0 0';
-    const canvas = await html2canvas(container, { backgroundColor: '#f0f4fb', scale: 2, useCORS: true });
-    svg.style.transform = origTransform;
-    svg.style.transformOrigin = origOrigin;
-    const a = document.createElement('a');
-    a.download = 'Struktur_' + CHART_PERIOD.replace(/ /g, '_') + '.png';
-    a.href = canvas.toDataURL('image/png');
-    a.click();
+    const w   = parseFloat(svg.getAttribute('width'));
+    const h   = parseFloat(svg.getAttribute('height'));
+
+    // Serialisasi SVG → data URL
+    const serializer = new XMLSerializer();
+    const svgClone   = svg.cloneNode(true);
+    // Reset transform di clone agar full chart tampil
+    svgClone.style.transform      = 'none';
+    svgClone.style.transformOrigin = '0 0';
+    svgClone.setAttribute('width',  w);
+    svgClone.setAttribute('height', h);
+
+    // Buat canvas manual via foreignObject pada blob URL
+    return new Promise((resolve) => {
+        const svgStr  = serializer.serializeToString(svgClone);
+        const blob    = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+        const url     = URL.createObjectURL(blob);
+        const img     = new Image();
+        img.onload = () => {
+            const cvs = document.createElement('canvas');
+            cvs.width  = w * scale;
+            cvs.height = h * scale;
+            const ctx  = cvs.getContext('2d');
+            ctx.fillStyle = '#f0f4fb';
+            ctx.fillRect(0, 0, cvs.width, cvs.height);
+            ctx.scale(scale, scale);
+            ctx.drawImage(img, 0, 0);
+            URL.revokeObjectURL(url);
+            resolve(cvs);
+        };
+        img.onerror = () => {
+            // Fallback: html2canvas jika SVG blob gagal (browser tertentu)
+            URL.revokeObjectURL(url);
+            const container = document.getElementById('oc-chart-container');
+            const origT = svg.style.transform;
+            svg.style.transform = 'none';
+            html2canvas(container, { backgroundColor: '#f0f4fb', scale: 2, useCORS: true }).then(c => {
+                svg.style.transform = origT;
+                resolve(c);
+            });
+        };
+        img.src = url;
+    });
+}
+
+document.getElementById('btn-png').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-png');
+    btn.disabled = true; btn.textContent = '...';
+    try {
+        const cvs = await exportSvgToPng(2);
+        const a   = document.createElement('a');
+        a.download = 'Struktur_' + CHART_PERIOD.replace(/ /g, '_') + '.png';
+        a.href = cvs.toDataURL('image/png');
+        a.click();
+    } finally {
+        btn.disabled = false; btn.textContent = 'PNG';
+    }
 });
 
 document.getElementById('btn-pdf').addEventListener('click', async () => {
-    const container = document.getElementById('oc-chart-container');
-    const svg = document.getElementById('oc-svg');
-    const origTransform = svg.style.transform;
-    svg.style.transform = 'none';
-    const canvas = await html2canvas(container, { backgroundColor: '#f0f4fb', scale: 2, useCORS: true });
-    svg.style.transform = origTransform;
-    const { jsPDF } = window.jspdf;
-    const pdf   = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
-    const pw = pdf.internal.pageSize.getWidth();
-    const ph = pdf.internal.pageSize.getHeight();
-    const ratio = Math.min((pw - 20) / (canvas.width / 2), (ph - 25) / (canvas.height / 2));
-    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 10, 10, (canvas.width/2)*ratio, (canvas.height/2)*ratio);
-    pdf.setFontSize(8); pdf.setTextColor(120);
-    pdf.text('PT Bank Riau Kepri Syariah | Periode: ' + CHART_PERIOD, pw / 2, ph - 5, { align: 'center' });
-    pdf.save('Struktur_' + CHART_PERIOD.replace(/ /g, '_') + '.pdf');
+    const btn = document.getElementById('btn-pdf');
+    btn.disabled = true; btn.textContent = '...';
+    try {
+        const cvs = await exportSvgToPng(2);
+        const { jsPDF } = window.jspdf;
+        const pdf  = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
+        const pw   = pdf.internal.pageSize.getWidth();
+        const ph   = pdf.internal.pageSize.getHeight();
+        const imgW = cvs.width  / 2;  // px (scale=2 → /2 untuk ukuran asli)
+        const imgH = cvs.height / 2;
+        // Scale to fit A3 landscape with 10mm margin
+        const ratio = Math.min((pw - 20) / imgW, (ph - 25) / imgH);
+        const dstW  = imgW * ratio;
+        const dstH  = imgH * ratio;
+        const offX  = (pw - dstW) / 2;
+        pdf.addImage(cvs.toDataURL('image/png'), 'PNG', offX, 10, dstW, dstH);
+        pdf.setFontSize(7); pdf.setTextColor(130);
+        pdf.text('PT Bank Riau Kepri Syariah | Periode: ' + CHART_PERIOD, pw / 2, ph - 5, { align: 'center' });
+        pdf.save('Struktur_' + CHART_PERIOD.replace(/ /g, '_') + '.pdf');
+    } finally {
+        btn.disabled = false; btn.textContent = 'PDF';
+    }
 });
 
 document.getElementById('btn-print').addEventListener('click', () => {
+    const svg  = document.getElementById('oc-svg');
+    const origT = svg.style.transform;
+    svg.style.transform = 'none';
     document.getElementById('oc-print-header').style.display = 'flex';
     document.getElementById('oc-print-footer').style.display = 'block';
     window.print();
     setTimeout(() => {
         document.getElementById('oc-print-header').style.display = 'none';
         document.getElementById('oc-print-footer').style.display = 'none';
+        svg.style.transform = origT;
     }, 1500);
 });
+
 
 // ════════════════════════════════════════════════════════════
 //  MODAL
